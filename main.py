@@ -24,7 +24,43 @@ class Cinema:
         self.seats_per_row = seats_per_row
         self.seating = [['.' for _ in range(seats_per_row)] for _ in range(rows)]
         self.bookings = {}  # booking_id: List[Tuple[row, col]]
+        self.booking_counter = 1  # Start booking IDs from GIC0001
+        self.used_booking_numbers = set()  # Track used booking numbers
 
+    def generate_booking_id(self) -> str:
+        """Find the smallest available booking ID"""
+        # Start from 1 and find the first number not in used_booking_numbers
+        booking_number = 1
+        while booking_number in self.used_booking_numbers:
+            booking_number += 1
+        
+        # Add to used set and return formatted ID
+        self.used_booking_numbers.add(booking_number)
+        return f"GIC{booking_number:04d}"
+    
+    def cancel_booking(self, booking_id: str) -> bool:
+        """Cancel a booking and free up its ID for reuse"""
+        if booking_id not in self.bookings:
+            return False
+        
+        try:
+            # Free up the seats
+            seats = self.bookings[booking_id]
+            for r, c in seats:
+                self.seating[r][c] = '.'
+            
+            # Remove from bookings
+            del self.bookings[booking_id]
+            
+            # Extract number from booking ID and remove from used set
+            booking_number = int(booking_id[3:])  # Remove "GIC" prefix
+            self.used_booking_numbers.discard(booking_number)
+            
+            return True
+        except Exception as e:
+            print(f"Error cancelling booking: {e}")
+            return False
+    
     def display_seating(self, temp_seats: List[Tuple[int, int]] = []):
         try:
             col_headers = "    " + "".join(f"{i+1:>4}" for i in range(self.seats_per_row))
@@ -61,31 +97,60 @@ class Cinema:
             raise InvalidSeatError(f"Cannot book {count} seats. Maximum capacity is {self.rows * self.seats_per_row}")
         
         try:
-            mid_col = self.seats_per_row // 2
-            seats_needed = count
             selected_seats = []
+            seats_needed = count
             
             # Start from the furthest row (highest row index) and work towards the screen
             for row in reversed(range(self.rows)):
+                if seats_needed == 0:
+                    break
+                
                 # Find all available seats in this row
-                available_seats = [(row, col) for col in range(self.seats_per_row) 
+                available_seats = [col for col in range(self.seats_per_row) 
                                 if self.seating[row][col] == '.']
                 
                 if not available_seats:
                     continue  # Skip fully occupied rows
                 
-                # Sort available seats by distance from center
-                available_seats.sort(key=lambda seat: abs(seat[1] - mid_col))
+                # Start from middle-most position and work outwards
+                # For even number of seats, use left-center (e.g., for 10 seats, use seat 5 not 6)
+                mid_col = (self.seats_per_row - 1) // 2
                 
-                # Try to take seats from the middle outwards
-                while available_seats and seats_needed > 0:
-                    # Take the seat closest to center
-                    seat = available_seats.pop(0)
-                    selected_seats.append(seat)
-                    seats_needed -= 1
+                # Create a list of columns ordered by distance from middle
+                cols_by_distance = []
                 
-                if seats_needed == 0:
-                    break
+                # Add middle column first if available
+                if mid_col in available_seats:
+                    cols_by_distance.append(mid_col)
+                    available_seats.remove(mid_col)
+                
+                # Add remaining columns by alternating left and right from center
+                left_offset = 1
+                right_offset = 1
+                
+                while available_seats:
+                    # Try right side
+                    right_col = mid_col + right_offset
+                    if right_col < self.seats_per_row and right_col in available_seats:
+                        cols_by_distance.append(right_col)
+                        available_seats.remove(right_col)
+                    
+                    # Try left side
+                    left_col = mid_col - left_offset
+                    if left_col >= 0 and left_col in available_seats:
+                        cols_by_distance.append(left_col)
+                        available_seats.remove(left_col)
+                    
+                    left_offset += 1
+                    right_offset += 1
+                
+                # Take seats from this row up to what we need
+                for col in cols_by_distance:
+                    if seats_needed > 0:
+                        selected_seats.append((row, col))
+                        seats_needed -= 1
+                    else:
+                        break
             
             if seats_needed > 0:
                 raise InvalidSeatError(f"Only found {count - seats_needed} available seats, but {count} requested")
@@ -97,60 +162,87 @@ class Cinema:
             raise InvalidSeatError(f"Error finding default seats: {e}")
 
     def custom_seating(self, count: int, start_row: int, start_col: int) -> List[Tuple[int, int]]:
+        # print(f"DEBUG: Requesting {count} seats starting at row {start_row}, col {start_col}")
         if count <= 0:
             raise ValueError("Number of seats must be positive")
         
         # Validate starting position
         if not (0 <= start_row < self.rows):
-            raise InvalidSeatError(f"Invalid row index: {start_row}. Must be 0-{self.rows-1}")
-        
+            raise InvalidSeatError(f"Invalid row index: {start_row}")
         if not (0 <= start_col < self.seats_per_row):
-            raise InvalidSeatError(f"Invalid column index: {start_col}. Must be 0-{self.seats_per_row-1}")
+            raise InvalidSeatError(f"Invalid column index: {start_col}")
         
-        try:
-            assigned = []
-            current_col = start_col
+        selected_seats = []
+        seats_needed = count
+        
+        # First: Fill the specified row from the specified position to the right
+        for col in range(start_col, self.seats_per_row):
+            if seats_needed > 0 and self.seating[start_row][col] == '.':
+                selected_seats.append((start_row, col))
+                seats_needed -= 1
+        
+        # If we need more seats, overflow to next rows closer to the screen
+        # Start from the immediate next row closer to screen and work our way forward
+        current_row = start_row - 1  # Next row closer to screen
+        
+        while seats_needed > 0 and current_row >= 0:
+            # Find all available seats in this row
+            available_seats = [col for col in range(self.seats_per_row) 
+                             if self.seating[current_row][col] == '.']
             
-            # Search from the specified position
-            for row in range(start_row, -1, -1):  # go closer to screen
-                for col in range(current_col, self.seats_per_row):
-                    if len(assigned) >= count:
-                        break
-                    
-                    if self.seating[row][col] == '.':
-                        assigned.append((row, col))
+            if not available_seats:
+                current_row -= 1  # Move to next row closer to screen
+                continue
+            
+            # For overflow rows, use default seating logic (center outward)
+            # For even number of seats, use left-center (e.g., for 10 seats, use seat 5 not 6)
+            mid_col = (self.seats_per_row - 1) // 2
+            
+            # Create a list of columns ordered by distance from middle
+            cols_by_distance = []
+            
+            # Add middle column first if available
+            if mid_col in available_seats:
+                cols_by_distance.append(mid_col)
+                available_seats.remove(mid_col)
+            
+            # Add remaining columns by alternating left and right from center
+            left_offset = 1
+            right_offset = 1
+            
+            while available_seats:
+                # Try right side
+                right_col = mid_col + right_offset
+                if right_col < self.seats_per_row and right_col in available_seats:
+                    cols_by_distance.append(right_col)
+                    available_seats.remove(right_col)
                 
-                # Reset column to 0 for next rows
-                current_col = 0
+                # Try left side
+                left_col = mid_col - left_offset
+                if left_col >= 0 and left_col in available_seats:
+                    cols_by_distance.append(left_col)
+                    available_seats.remove(left_col)
                 
-                if len(assigned) >= count:
+                left_offset += 1
+                right_offset += 1
+            
+            # Take seats from this row up to what we need
+            for col in cols_by_distance:
+                if seats_needed > 0:
+                    selected_seats.append((current_row, col))
+                    seats_needed -= 1
+                else:
                     break
             
-            # If we don't have enough seats, try to find remaining seats anywhere
-            if len(assigned) < count:
-                remaining_needed = count - len(assigned)
-                available_seats = []
-                
-                for r in range(self.rows):
-                    for c in range(self.seats_per_row):
-                        if self.seating[r][c] == '.' and (r, c) not in assigned:
-                            available_seats.append((r, c))
-                
-                # Add remaining seats
-                for seat in available_seats[:remaining_needed]:
-                    assigned.append(seat)
-            
-            if len(assigned) < count:
-                raise InvalidSeatError(f"Only {len(assigned)} seats available, but {count} requested")
-            
-            return assigned[:count]  # Ensure we don't return more than requested
-            
-        except Exception as e:
-            if isinstance(e, InvalidSeatError):
-                raise
-            raise InvalidSeatError(f"Error in custom seating: {e}")
+            # Move to next row closer to screen
+            current_row -= 1
+        
+        if seats_needed > 0:
+            raise InvalidSeatError(f"Only {len(selected_seats)} seats available, but {count} requested")
+        
+        return selected_seats
 
-    def confirm_booking(self, seats: List[Tuple[int, int]]) -> str:
+    def confirm_booking(self, seats: List[Tuple[int, int]], booking_id) -> str:
         if not seats:
             raise BookingError("No seats to book")
         
@@ -166,9 +258,6 @@ class Cinema:
             # Mark seats as booked
             for r, c in seats:
                 self.seating[r][c] = '#'
-            
-            # Generate booking ID
-            booking_id = str(uuid.uuid4())[:8]
             self.bookings[booking_id] = seats
             
             return booking_id
@@ -254,7 +343,7 @@ def parse_seat_position(pos: str, rows: int, seats_per_row: int) -> Tuple[int, i
     except ValueError:
         raise ValueError(f"Column must be a number between 1-{seats_per_row}")
     
-    # Convert to array indices
+    # FIXED: Correct row index calculation
     row_index = rows - 1 - (ord(row_str) - ord('A'))
     col_index = col_num - 1
     
@@ -311,11 +400,12 @@ def main():
                             lambda x: 0 < x <= cinema.rows * cinema.seats_per_row,
                             f"Number must be between 1 and {cinema.rows * cinema.seats_per_row}"
                         )
-
+                        # Generate booking ID
+                        booking_id = cinema.generate_booking_id()
                         # Generate default seats
                         try:
                             default_seats = cinema.generate_default_seats(num_tickets)
-                            print("\nDefault seating selection:")
+                            print(f"\nSuccessfully reserved {num_tickets} {title} tickets.\nBooking ID: {booking_id}\nSelected seats:")
                             cinema.display_seating(default_seats)
                         except InvalidSeatError as e:
                             print(f"Error: {e}")
@@ -334,23 +424,32 @@ def main():
                                 row_index, col_index = parse_seat_position(pos, cinema.rows, cinema.seats_per_row)
                                 selected = cinema.custom_seating(num_tickets, row_index, col_index)
                                 
-                                print("\nYour seating selection:")
+                                print(f"\nBooking ID: {booking_id}\nSelected seats:")
                                 cinema.display_seating(selected)
-                                confirm = pos == ''
-                                if confirm:
+                                
+                                # FIXED: Ask for confirmation for custom seating
+                                confirm_input = input("Press Enter to accept this selection, or enter another seat position:\n>").strip()
+                                if confirm_input == '':
                                     break
+                                else:
+                                    # User wants to try a different position
+                                    pos = confirm_input
+                                    row_index, col_index = parse_seat_position(pos, cinema.rows, cinema.seats_per_row)
+                                    selected = cinema.custom_seating(num_tickets, row_index, col_index)
+                                    print(f"\nBooking ID: {booking_id}\nSelected seats:")
+                                    cinema.display_seating(selected)
+                                    continue
 
                             except (ValueError, InvalidSeatError) as e:
                                 print(f"Error: {e}")
-                                break
+                                # Continue the loop to let user try again
+                                continue
                         
                         # Confirm booking
                         if 'selected' in locals() and selected:
                             try:
-                                booking_id = cinema.confirm_booking(selected)
-                                print(f"\n✓ Booking confirmed!")
-                                print(f"Booking ID: {booking_id}")
-                                print("Please save this ID for future reference.")
+                                booking_id = cinema.confirm_booking(selected, booking_id)
+                                print(f"Booking ID: {booking_id} confirmed.")
                             except BookingError as e:
                                 print(f"Booking failed: {e}")
                         
@@ -367,14 +466,15 @@ def main():
                         print(f"Error checking booking: {e}")
 
                 elif choice == '3':
-                    print("Thank you for using GIC Cinemas. Goodbye!")
+                    print("Thank you for using GIC Cinemas. Bye!")
+                    cinema.cancel_booking(booking_id)
                     break
                     
                 else:
                     print("Invalid choice. Please enter 1, 2, or 3.")
                     
             except KeyboardInterrupt:
-                print("\n\nExiting... Thank you for using GIC Cinemas!")
+                print("\n\n Exiting... Thank you for using GIC Cinemas!")
                 break
             except Exception as e:
                 print(f"Unexpected error: {e}")
