@@ -2,7 +2,8 @@ import uuid
 import math
 from typing import List, Tuple, Optional
 
-from .models import Cinema, InvalidSeatError, BookingError
+from models import Cinema, InvalidSeatError, BookingError
+from utilities import get_valid_input, parse_seat_position
 
 def main():
     try:
