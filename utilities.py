@@ -1,9 +1,11 @@
 from typing import Tuple
 
+from settings import MAX_TRIES
+
 
 def get_valid_input(prompt: str, input_type: type, validation_func=None, error_msg: str = None) -> any:
     """Get valid input with proper error handling"""
-    max_attempts = 3
+    max_attempts = MAX_TRIES
     attempts = 0
     
     while attempts < max_attempts:

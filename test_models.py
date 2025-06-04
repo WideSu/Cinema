@@ -1,5 +1,5 @@
 import pytest
-from .models import Cinema, InvalidSeatError, BookingError
+from .models import Cinema, CinemaError, InvalidSeatError, BookingError
 
 # Test Cinema creation and validation
 def test_cinema_creation_valid():
@@ -11,9 +11,9 @@ def test_cinema_creation_valid():
     assert all(len(row) == 8 for row in c.seating)
 
 def test_cinema_creation_invalid():
-    with pytest.raises(ValueError):
+    with pytest.raises(CinemaError):
         Cinema("Bad", 0, 5)
-    with pytest.raises(ValueError):
+    with pytest.raises(CinemaError):
         Cinema("Bad", 5, 0)
 
 # Test booking ID generation and reuse

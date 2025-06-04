@@ -1,8 +1,8 @@
 import uuid
 import math
 from typing import List, Tuple, Optional
-
-from models import Cinema, InvalidSeatError, BookingError
+from settings import MAX_ROWS, MAX_TRIES, MAX_SEATS_PER_ROW
+from models import Cinema, CinemaError, InvalidSeatError, BookingError
 from utilities import get_valid_input, parse_seat_position
 
 def main():
@@ -12,22 +12,22 @@ def main():
             try:
                 user_input = input("Enter movie title, number of rows, and seats per row (separated by space):\n>").strip()
                 parts = user_input.split()
-                
-                if len(parts) != 3:
-                    print("Please enter exactly 3 values: title, rows, seats_per_row")
+                if len(parts) < 3:
+                    print("Please enter exactly 3 values: a title and two numbers.")
                     continue
-                
-                title, rows_str, seats_str = parts
+                *title_parts, rows_str, seats_str = parts
+                title = " ".join(title_parts)
                 rows = int(rows_str)
                 seats_per_row = int(seats_str)
                 
                 if rows <= 0 or seats_per_row <= 0:
-                    print("Rows and seats must be positive numbers.")
-                    continue
+                    raise CinemaError("Rows and seats must be positive numbers.")
                 
-                if rows > 26:  # Limit to A-Z
-                    print("Maximum 26 rows supported (A-Z).")
-                    continue
+                if rows > MAX_ROWS:  # Limit to A-Z
+                    raise CinemaError(f"Maximum {MAX_ROWS} rows supported (A-Z).")
+                
+                if seats_per_row > MAX_SEATS_PER_ROW:
+                    raise CinemaError(f"Maximum {MAX_SEATS_PER_ROW} seats per row supported.")
                 
                 cinema = Cinema(title, rows, seats_per_row)
                 break
@@ -60,20 +60,24 @@ def main():
                         booking_id = cinema.generate_booking_id()
                         # Generate default seats
                         try:
-                            default_seats = cinema.generate_default_seats(num_tickets)
+                            selected = cinema.generate_default_seats(num_tickets)
                             print(f"\nSuccessfully reserved {num_tickets} {title} tickets.\nBooking ID: {booking_id}\nSelected seats:")
-                            cinema.display_seating(default_seats)
+                            cinema.display_seating(selected)
                         except InvalidSeatError as e:
                             print(f"Error: {e}")
                             continue
                         
-                        # Get user's seating preference
-                        while True:
+                        # Get user's seating preference (max 3 tries)
+                        cur_tries = 1
+                        while cur_tries < MAX_TRIES:
                             try:
                                 pos = input("Press Enter to accept default, or enter seat position (e.g., A5):\n>").strip()
-                                
                                 if pos == '':
-                                    selected = default_seats
+                                    try:
+                                        booking_id = cinema.confirm_booking(selected, booking_id)
+                                        print(f"Booking ID: {booking_id} confirmed.")
+                                    except BookingError as e:
+                                        print(f"Booking failed: {e}")
                                     break
                                 
                                 # Parse custom position
@@ -83,12 +87,20 @@ def main():
                                 print(f"\nBooking ID: {booking_id}\nSelected seats:")
                                 cinema.display_seating(selected)
                                 
-                                # FIXED: Ask for confirmation for custom seating
                                 confirm_input = input("Press Enter to accept this selection, or enter another seat position:\n>").strip()
                                 if confirm_input == '':
+                                    try:
+                                        booking_id = cinema.confirm_booking(selected, booking_id)
+                                        print(f"Booking ID: {booking_id} confirmed.")
+                                    except BookingError as e:
+                                        print(f"Booking failed: {e}")
                                     break
                                 else:
                                     # User wants to try a different position
+                                    cur_tries += 1
+                                    if cur_tries >= MAX_TRIES:
+                                        print(f"Exceeded maximum {MAX_TRIES} tries. Please start over.")
+                                        break
                                     pos = confirm_input
                                     row_index, col_index = parse_seat_position(pos, cinema.rows, cinema.seats_per_row)
                                     selected = cinema.custom_seating(num_tickets, row_index, col_index)
@@ -100,15 +112,8 @@ def main():
                                 print(f"Error: {e}")
                                 # Continue the loop to let user try again
                                 continue
-                        
-                        # Confirm booking
-                        if 'selected' in locals() and selected:
-                            try:
-                                booking_id = cinema.confirm_booking(selected, booking_id)
-                                print(f"Booking ID: {booking_id} confirmed.")
-                            except BookingError as e:
-                                print(f"Booking failed: {e}")
-                        
+                        if cur_tries >= MAX_TRIES:
+                            print(f"Exceeded maximum {MAX_TRIES} tries. Please start over.")
                     except ValueError as e:
                         print(f"Input error: {e}")
                     except Exception as e:
